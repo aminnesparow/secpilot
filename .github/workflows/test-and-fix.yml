@@ -7,6 +7,7 @@ on:
 jobs:
   juice-shop:
     runs-on: ubuntu-latest
+    
     services:
       juice-shop:
         image: bkimminich/juice-shop
@@ -38,11 +39,4 @@ jobs:
         run: |
           curl -X POST -H "Content-Type: application/json" \
                -d @juice-shop-report.json \
-               https://YOUR_NGROK_URL/analyze || echo "API not reachable"
-
-      # --- Hadi hiya l-khtwa li bghiti ---
-      - name: Upload Report as Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: semgrep-report
-          path: juice-shop-report.json
+               http://localhost:3000/#/search
