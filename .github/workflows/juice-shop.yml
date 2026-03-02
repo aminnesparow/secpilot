@@ -1,0 +1,44 @@
+name: SecPilot JuiceShop Integration
+
+on:
+  push:
+    branches: [ "main", "feature-juice-shop-scan" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  juice-shop:
+    runs-on: ubuntu-latest
+
+    services:
+      juice-shop:
+        image: bkimminich/juice-shop
+        ports:
+          - 3000:3000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Download Juice Shop Source
+        run: git clone --depth 1 https://github.com/juice-shop/juice-shop.git ./source-code
+
+      - name: Scan Code
+        run: semgrep --config=auto ./source-code --json > juice-shop-report.json || true
+
+      - name: Check Report Local
+        run: ls -lh juice-shop-report.json
+
+      - name: Send report to SecPilot API
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+               -d @juice-shop-report.json \
+               https://secpilot-api.ngrok.app/analyze
