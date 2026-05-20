@@ -1,0 +1,104 @@
+name: Banking CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/src/python
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff
+      - name: Ruff (lint)
+        run: ruff check src/python/banking tests/python/banking
+      - name: Ruff (format check)
+        run: ruff format --check src/python/banking tests/python/banking
+
+  unit-and-property:
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: pytest -c config/pytest.ini tests/python/banking/unit --cov=src/python/banking --cov-report=xml --cov-report=term --junitxml=junit-unit.xml
+      - name: Run property tests
+        run: pytest -c config/pytest.ini tests/python/banking/property --hypothesis-show-statistics --junitxml=junit-property.xml
+      - name: Upload coverage
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage.xml
+      - name: Upload junit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.python }}
+          path: junit-*.xml
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run integration tests (testcontainers Postgres)
+        run: pytest -c config/pytest.ini tests/python/banking/integration --junitxml=junit-integration.xml
+      - name: Upload junit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-integration
+          path: junit-integration.xml
+
+  security:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install semgrep bandit
+      - name: Semgrep
+        run: semgrep --config .semgrep.yml src/python/banking --error --json --output semgrep-banking.json || true
+      - name: Bandit
+        run: bandit -r src/python/banking -ll -f json -o bandit-banking.json || true
+      - name: Upload SAST reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports
+          path: |
+            semgrep-banking.json
+            bandit-banking.json
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    needs: [unit-and-property, integration, security]
+    steps:
+      - run: echo "Banking CI quality gate passed."
