@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://secpilot.io/schemas/finding.schema.json",
+  "title": "SecPilot Unified SAST Finding",
+  "description": "Format JSON pivot universel pour les findings SAST consommes par l'API_P SecPilot. Permet d'unifier les sorties Semgrep, SonarQube, CodeQL ou tout autre outil SAST emettant du SARIF.",
+  "type": "object",
+  "required": ["schema_version", "source", "total_findings", "findings"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Version du schema. Permet l'evolution non-breaking."
+    },
+    "source": {
+      "type": "string",
+      "enum": ["semgrep", "sonarqube", "codeql", "snyk", "trivy", "other"],
+      "description": "Outil SAST a l'origine du scan."
+    },
+    "scan_id": {
+      "type": "string",
+      "description": "Identifiant unique du scan (UUID recommande)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Date et heure du scan en ISO 8601."
+    },
+    "target": {
+      "type": "object",
+      "description": "Cible scannee (repo, branche, commit).",
+      "properties": {
+        "repository": {"type": "string"},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"}
+      }
+    },
+    "total_findings": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "summary": {
+      "type": "object",
+      "description": "Agregats utilises par le dispatcher LLM pour le routage.",
+      "properties": {
+        "by_severity": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "by_domain": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "by_language": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/finding"}
+    }
+  },
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": ["rule_id", "severity", "message", "location"],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "description": "Identifiant de la regle SAST (ex: ecommerce-no-negative-price-python)."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["CRITIQUE", "HAUTE", "MOYENNE", "BASSE", "INFO"],
+          "description": "Severite normalisee. Mapping fait par chaque parser source."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["python", "javascript", "typescript", "java", "go", "ruby", "csharp", "php", "other"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Message destine au developpeur. Doit etre actionnable."
+        },
+        "location": {
+          "type": "object",
+          "required": ["file"],
+          "properties": {
+            "file": {"type": "string"},
+            "line": {"type": "integer", "minimum": 0},
+            "column": {"type": "integer", "minimum": 0},
+            "end_line": {"type": "integer", "minimum": 0},
+            "snippet": {"type": "string"}
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Annotations metier injectees dans le prompt du LLM Correcteur.",
+          "properties": {
+            "business_rule": {"type": "string"},
+            "domain": {"type": "string", "enum": ["banking", "ecommerce", "healthcare", "general"]},
+            "category": {
+              "type": "string",
+              "enum": ["business-logic", "classic-bug", "security", "vulnerability"]
+            },
+            "cwe": {"type": "string", "pattern": "^CWE-[0-9]+$"},
+            "owasp": {"type": "string"}
+          }
+        },
+        "fix_suggestion": {
+          "type": "string",
+          "description": "Suggestion de correction emise par le SAST source (optionnel)."
+        }
+      }
+    }
+  }
+}

@@ -284,3 +284,180 @@ rules:
       Correction : `const nextDose = new Date(lastDoseTime.getTime())`
     metadata:
       category: classic-bug
+
+  # ===============================================
+  # RÈGLES JAVA - BANQUE / E-COMMERCE / SANTÉ
+  # ===============================================
+
+  - id: banking-missing-balance-check-java
+    patterns:
+      - pattern: |
+          public static boolean transferFunds($FROM, $TO, $AMOUNT) {
+              ...
+              $FROM.withdraw($AMOUNT);
+              ...
+          }
+      - pattern-not: |
+          public static boolean transferFunds($FROM, $TO, $AMOUNT) {
+              if ($FROM.getBalance() < $AMOUNT) { ... }
+              ...
+          }
+    languages: [java]
+    severity: ERROR
+    message: >
+      [BK-001] RÈGLE MÉTIER : transferFunds() débite le compte sans vérifier
+      le solde. Ajouter : `if (from.getBalance() < amount) throw new InsufficientBalanceException()`
+    metadata:
+      business_rule: BK-001
+      domain: banking
+      category: business-logic
+
+  - id: banking-bigdecimal-equals-java
+    patterns:
+      - pattern: $A.equals($B)
+    languages: [java]
+    paths:
+      include:
+        - src/java/**/banking/*.java
+    severity: WARNING
+    message: >
+      [BK-003] BUG CLASSIQUE : BigDecimal.equals() considère l'échelle,
+      donc 2.0 != 2.00. Utiliser `a.compareTo(b) == 0` pour comparer des montants.
+    metadata:
+      business_rule: BK-003
+      domain: banking
+      category: classic-bug
+
+  - id: banking-double-for-money-java
+    patterns:
+      - pattern: |
+          public static double calculateInterest(double $P, double $R, int $Y) { ... }
+    languages: [java]
+    severity: ERROR
+    message: >
+      [BK-003] RÈGLE MÉTIER : Les calculs financiers ne doivent JAMAIS utiliser
+      `double` (perte de précision IEEE 754). Utiliser BigDecimal avec MathContext explicite.
+    metadata:
+      business_rule: BK-003
+      domain: banking
+      category: business-logic
+
+  - id: ecommerce-no-negative-price-java
+    patterns:
+      - pattern: |
+          public static void setProductPrice($PRODUCT, $PRICE) {
+              ...
+              $PRODUCT.setPrice($PRICE);
+              ...
+          }
+      - pattern-not: |
+          public static void setProductPrice($PRODUCT, $PRICE) {
+              if ($PRICE.compareTo(BigDecimal.ZERO) < 0) { ... }
+              ...
+          }
+    languages: [java]
+    severity: ERROR
+    message: >
+      [EC-001] RÈGLE MÉTIER : setProductPrice() ne valide pas le signe du prix.
+      Ajouter : `if (price.compareTo(BigDecimal.ZERO) < 0) throw new IllegalArgumentException("Price cannot be negative")`
+    metadata:
+      business_rule: EC-001
+      domain: ecommerce
+      category: business-logic
+
+  - id: healthcare-missing-dosage-cap-java
+    patterns:
+      - pattern: |
+          public static double calculateDosage(double $W, double $D, String $MED) {
+              ...
+              return $W * $D;
+          }
+      - pattern-not: |
+          public static double calculateDosage(double $W, double $D, String $MED) {
+              ...
+              return Math.min(..., ...);
+          }
+    languages: [java]
+    severity: ERROR
+    message: >
+      [HC-001] RÈGLE MÉTIER CRITIQUE : calculateDosage() ne plafonne pas la dose.
+      Correction : `return Math.min(weight * dose, MAX_DOSES.getOrDefault(med, Double.MAX_VALUE))`
+    metadata:
+      business_rule: HC-001
+      domain: healthcare
+      category: business-logic
+
+  - id: java-nullpointer-on-regex
+    patterns:
+      - pattern: $S.matches($PATTERN)
+      - pattern-not-inside: |
+          if ($S != null) { ... }
+      - pattern-not-inside: |
+          if ($S == null) { ... }
+    languages: [java]
+    severity: WARNING
+    message: >
+      BUG CLASSIQUE : Appel à matches() sur une String potentiellement null.
+      Ajouter une vérification de nullité avant ou utiliser Objects.requireNonNull().
+    metadata:
+      domain: general
+      category: classic-bug
+
+  # ===============================================
+  # RÈGLES JS COMPLÉMENTAIRES
+  # ===============================================
+
+  - id: banking-redos-pattern-js
+    patterns:
+      - pattern: new RegExp("...")
+      - pattern-either:
+        - pattern: /\(.*\+\)\+/
+        - pattern: /\(.*\*\)\*/
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      [SEC-001] VULNÉRABILITÉ : Pattern regex sujet au backtracking catastrophique (ReDoS).
+      Les patterns du type (\d+)+ peuvent provoquer un déni de service.
+      Correction : utiliser `^\d+$` directement, sans nested quantifiers.
+    metadata:
+      domain: banking
+      category: security
+      cwe: CWE-1333
+
+  - id: banking-nan-on-zero-rate-js
+    patterns:
+      - pattern: |
+          function calculateMonthlyPayment($P, $R, $M) {
+              const $MR = $R / 12;
+              ...
+              return $X;
+          }
+      - pattern-not: |
+          function calculateMonthlyPayment($P, $R, $M) {
+              if ($R === 0) { ... }
+              ...
+          }
+    languages: [javascript]
+    severity: WARNING
+    message: >
+      BUG CLASSIQUE : Propagation de NaN si annualRate === 0 (division puis log(1+0)).
+      Ajouter : `if (annualRate === 0) return principal / months;`
+    metadata:
+      domain: banking
+      category: classic-bug
+
+  - id: banking-missing-account-check-js
+    patterns:
+      - pattern: |
+          function getAccountBalance($ID, $ACCOUNTS) {
+              return $ACCOUNTS[$ID].balance;
+          }
+    languages: [javascript]
+    severity: WARNING
+    message: >
+      BUG CLASSIQUE : Accès direct à accounts[accountId] sans vérification d'existence.
+      Lèvera TypeError si le compte est inconnu.
+      Correction : `if (!accounts[accountId]) throw new Error("Account not found")`
+    metadata:
+      domain: banking
+      category: classic-bug
