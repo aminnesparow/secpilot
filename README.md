@@ -1,27 +1,38 @@
-# Secpilot
+# SecPilot — Couche CI/CD & QA
 
-Outil CI/CD qui suggère des corrections de code en utilisant un LLM lorsque les tests échouent.
+Couche CI/CD du projet SecPilot : pré-détection SAST multi-outils, normalisation
+des findings vers un format JSON pivot, et envoi à l'orchestrateur API_P pour
+remédiation automatique par le moteur IA.
 
 ## Aperçu
 
-Secpilot est une pipeline CI/CD intelligente qui :
-1. Exécute des tests pour du code Python, JavaScript et Java
-2. Détecte les échecs de tests
-3. Analyse les échecs avec un LLM (Ollama, Anthropic, OpenAI)
-4. Suggère des corrections basées sur le contexte métier
+Cette pipeline CI/CD :
+1. Exécute les tests unitaires pour Python, JavaScript et Java (triple langage)
+2. Lance une analyse SAST avec **plusieurs outils en parallèle** (Semgrep, CodeQL)
+3. Normalise tous les findings vers un **format JSON pivot unifié**
+4. Envoie le résultat à l'API_P SecPilot qui orchestre la remédiation LLM
+5. Collecte les **métriques opérationnelles** (taux One-Shot, MTTR, PRs acceptées)
 
 ## Structure du projet
 
 ```
 secpilot/
-├── .github/workflows/     # Configuration de la pipeline CI/CD
-├── src/                   # Code source bugué (pour démonstration)
+├── .github/workflows/     # Pipelines CI/CD (multi-SAST + Juice Shop)
+├── schemas/               # Format JSON pivot unifié (finding.schema.json)
+├── src/                   # Code source bugué (démonstration multi-langages)
 │   ├── python/
 │   ├── javascript/
 │   └── java/
-├── tests/                 # Tests unitaires qui détectent les bugs
-├── contexts/              # Documentation du contexte métier
-├── scripts/               # Scripts d'intégration LLM
+├── tests/                 # Tests unitaires qui reproduisent les bugs
+├── contexts/              # Documentation du contexte métier (3 domaines)
+├── scripts/               # Adapters SAST + collecteur de métriques
+│   ├── sast_adapter.py            # Entrée unifiée (Semgrep/SonarQube/CodeQL)
+│   ├── parse_semgrep_findings.py  # Parser SARIF Semgrep
+│   ├── parse_sonarqube_findings.py
+│   ├── parse_codeql_findings.py
+│   ├── metrics_collector.py       # Collecte des KPI opérationnels
+│   └── llm_fix_suggester.py       # Pont LLM (Ollama/Anthropic/OpenAI)
+├── .semgrep.yml           # 20+ règles SAST métier (Python/JS/Java)
 └── config/                # Configurations des frameworks de test
 ```
 
@@ -143,17 +154,65 @@ Il retourne :
 - **OpenAI** : GPT-4
 - **Mock** : Provider de test (pas de vraie API)
 
-## Contribution
+## Multi-SAST & format JSON pivot
 
-1. Forker le dépôt
-2. Créer une branche feature
-3. Apporter les modifications
-4. Exécuter tous les tests
-5. Soumettre une pull request
+Le module SAST est conçu comme une couche d'adaptation : peu importe l'outil
+SAST utilisé (Semgrep, SonarQube, CodeQL, ou n'importe quel autre émetteur
+SARIF), la sortie est normalisée vers le format pivot
+[`schemas/finding.schema.json`](schemas/finding.schema.json) avant ingestion
+par l'API_P SecPilot.
 
-## Auteur
+### Usage
 
-BOUREDJI Amine - CI/CD & QA
+```bash
+# Semgrep
+semgrep scan --config=.semgrep.yml --sarif --output=report.sarif src/
+python scripts/sast_adapter.py --source semgrep --input report.sarif --output findings.json
+
+# SonarQube (export issues API)
+python scripts/sast_adapter.py --source sonarqube --input issues.json --output findings.json
+
+# CodeQL
+codeql database analyze db.db --format=sarif-latest --output=report.sarif
+python scripts/sast_adapter.py --source codeql --input report.sarif --output findings.json
+```
+
+### Pourquoi un format pivot ?
+
+- **Interopérabilité** : n'importe quel SAST peut alimenter le pipeline IA
+- **Routage intelligent** : les agrégats (`by_severity`, `by_domain`, `by_language`)
+  permettent au dispatcher LLM de choisir le modèle le plus adapté
+- **Évolutivité** : ajouter un nouveau SAST = ajouter un parser, sans toucher
+  au reste de l'architecture
+
+## Métriques opérationnelles
+
+```bash
+# Enregistrer un run
+python scripts/metrics_collector.py record \
+    --findings 41 --fixed 38 --one-shot 35 \
+    --attempts 1.2 --duration 312.5 \
+    --pr-created 35 --pr-rejected 3
+
+# Voir l'agrégation
+python scripts/metrics_collector.py summary
+
+# Exporter pour le writeup
+python scripts/metrics_collector.py export --output metrics.md
+```
+
+Les métriques sont persistées en JSONL dans `data/metrics.jsonl` pour
+permettre l'agrégation temporelle et la démonstration de la valeur produit
+(taux One-Shot, MTTR, ratio de PR acceptées).
+
+## Auteurs
+
+- **BOUREDJI Amine** — CI/CD & QA (pipeline multi-langages, règles Semgrep métier,
+  adapters SAST, métriques)
+- **MANSOURI Othmane** — Validation E2E (intégration OWASP Juice Shop, scan
+  réel, envoi à l'API_P)
+
+Dans le cadre du projet SecPilot — Mission 25/26 (M1D).
 
 ## Licence
 

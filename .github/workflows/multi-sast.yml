@@ -1,0 +1,145 @@
+name: SecPilot Multi-SAST Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop", "feature/*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Run Semgrep with custom rules
+        run: |
+          semgrep scan \
+            --config=.semgrep.yml \
+            --config=auto \
+            --sarif \
+            --output=semgrep-report.sarif \
+            src/ || true
+
+      - name: Convert to SecPilot pivot format
+        run: |
+          python scripts/sast_adapter.py \
+            --source semgrep \
+            --input semgrep-report.sarif \
+            --output semgrep-findings.json \
+            --repository "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}"
+
+      - name: Upload Semgrep findings
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-findings
+          path: semgrep-findings.json
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'python', 'javascript', 'java' ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        if: matrix.language == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Build Java
+        if: matrix.language == 'java'
+        run: mvn -f config/pom.xml compile -DskipTests
+
+      - name: Autobuild
+        if: matrix.language != 'java'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+          output: codeql-results
+
+      - name: Setup Python (for adapter)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Convert to SecPilot pivot format
+        run: |
+          python scripts/sast_adapter.py \
+            --source codeql \
+            --input codeql-results/${{ matrix.language }}.sarif \
+            --output codeql-${{ matrix.language }}-findings.json \
+            --repository "${{ github.repository }}" \
+            --branch "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}"
+
+      - name: Upload CodeQL findings
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-${{ matrix.language }}-findings
+          path: codeql-${{ matrix.language }}-findings.json
+
+  send-to-secpilot:
+    name: Aggregate & Send to SecPilot
+    needs: [ semgrep, codeql ]
+    runs-on: ubuntu-latest
+    if: success() || failure()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Download all findings
+        uses: actions/download-artifact@v4
+        with:
+          path: findings/
+
+      - name: Send each finding set to SecPilot API
+        if: env.SECPILOT_API_URL != ''
+        env:
+          SECPILOT_API_URL: ${{ vars.SECPILOT_API_URL }}
+          SECPILOT_API_TOKEN: ${{ secrets.SECPILOT_API_TOKEN }}
+        run: |
+          for f in findings/*/*.json; do
+            echo "Sending $f"
+            curl -sS -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${SECPILOT_API_TOKEN}" \
+              -d @"$f" \
+              "${SECPILOT_API_URL}/analyze" || true
+          done
